@@ -84,6 +84,7 @@ void accelerationButtonValueChanged()
 	acceleration = !(bool)digitalRead(accelerationButton);
 
 	if (acceleration == 1) {
+		printf("Mode Acceleration /n");
         	ultimaCambiataTime = (uint32_t)millis();
         	aggiorna0_100time = true;
         /*
@@ -118,6 +119,7 @@ void gearUP(uint32_t sh_time)
 	        digitalWrite(gearUPpin, LOW);
 	        delay(shift_duration);
 	        digitalWrite(gearUPpin, HIGH);
+		printf("Marcia cambiata /n");
 	        ultimaCambiataTime = (uint32_t)millis();
 	        frame751.data[2] = shift_duration >> 8;
 	        frame751.data[3] = shift_duration;
