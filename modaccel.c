@@ -135,6 +135,7 @@ void gearUP(uint32_t sh_time){
         frame751.data[2] = shift_duration >> 8;
         frame751.data[3] = shift_duration;
         frame751.data=ctrlTime;
+        frame751.id=751;
         send_Frame(frame751); 
         gear_old=gear; 
         gear=gear+1;
@@ -244,16 +245,20 @@ int main(int argc, char *argv[])
           //frame751.data[5] = sh_time;
           //frame751.data[6] = 0;
           //frame751.data[7] = 0;
-          send_Frame(751, sh_time);
+          frame751.id=751;
+          frame751.time= (uint32_t)millis();
+          send_Frame(frame751);
 
           if(Speed == 0){
                 accStartTime = (uint32_t)millis();
               }
           if(Speed > 100 && aggiorna0_100time){
                 accTime = (uint32_t)millis() - accStartTime;
-                frame.data[4] = accTime >> 8;
-                frame.data[5] = accTime;
-                send_Frame(751, accStartTime);
+                frame751.data[4] = accTime >> 8;
+                frame751.data[5] = accTime;
+                frame751.id=751;
+                frame751.time=(uint32_t)millis();
+                send_Frame(frame751);
                 aggiorna0_100time = false;
                 
             }
