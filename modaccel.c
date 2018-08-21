@@ -94,7 +94,7 @@ void gear_input_setup() {
  */
 void shift_light_changed() {
     // early return on error, saving time with short jumps
-    if (!(bool) digitalRead(SHIFT_LIGHT_PIN))
+    if ((bool) digitalRead(SHIFT_LIGHT_PIN)) //! Signal is ACTIVE if 0
         return;
     
     if (is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0))
