@@ -1,242 +1,202 @@
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <wiringPi.h>
-#include <stdint.h>
 #include <string.h>
-#include <mosquitto.h>
+
+#include <semaphore.h>
+
 #include <json-c/json.h>
-#include <stdbool.h>
+#include <mosquitto.h>
+#include <wiringPi.h>
 
-const int accelerationButton = 11; //pin interruttore mod. accelerazione
+/*
+ * Configuration
+ */
+#define SHIFT_LIGHT_PIN     X
+#define NEUTRAL_GEAR_PIN    X
+#define GEAR_UP_PIN         X
+#define GEAR_SHIFT_TIME_MS  X // milliseconds
+#define GEAR_DEAD_TIME_MS   X // milliseconds
+#define GEAR_MAX            X
 
-//relay
-const int gearUPpin = 12;
-const int gearDWpin = 13;
+#define MQTT_TOPIC_GEAR     "data/formatted/gear"
+#define MQTT_BROKER_ADDR    "localhost"
+#define MQTT_BROKER_PORT    1883
+#define MQTT_KEEPALIVE      120
 
-const int CD_B = 25;
-const int CD_C = 21;
-const int CD_D = 23;
-const int CD_A = 24;
-const int LE   = 22;
+#define EXIT_FAILURE_MQTT_CONNECT -2
+#define EXIT_FAILURE_MUTEX        -3
 
-//const int SH_LT = 7;
-//#define N_GR 9
-#define lapEndButton 26
 
-const int SH_LT = 7;
-const int N_GR = 0;
-uint8_t gear = 1;
-uint8_t gear_old = 0;
-uint8_t Rpm = 0;
-uint8_t lapNumber = 0;
-float Speed = 0;
-uint32_t accTime = 0; //millisecondi
-uint32_t time0_75m = 0; //millisecondi
-uint32_t accStartTime = 0; //millisecondi
-uint8_t sogliaRpmUP = 46; //48=12500 rpm ::46=12000 rpm :: 44=11500 rpm :: 42=11000 rpm ::
-uint8_t sogliaRpmDW = 42;
-uint16_t tempoCieco = 2000; //millisecondi
-uint32_t ultimaCambiataTime = 0;
-uint32_t lap_time = 0;
-uint16_t durataCambiata = 50; //millisecondi di chiusura del relay
-uint16_t tempoAggFolle = 20; //tempo aggiuntivo da aggiungere al tempo di cambiata in caso di passaggio dal folle (caso prima marcia)
-bool aggiorna0_100time = false; //flag che indica che è stata superata la velocità di 100km/h nella prova di accelerazione
-bool acceleration = 0;
-struct mosquitto *mosq = NULL;
-char *topic = NULL;
+/*
+ * Globals
+ * For safety purposes, let's start assuming neutral gear is active,
+ * in order to NOT execute any unwanted mechanical operation.
+ */
+volatile bool is_neutral = true;
+volatile uint8_t current_gear = 0;
 
-const char* host= "localhost";
-const int port = 1883;
-const char* GEAR = "$SYS/formatted/GEAR";
-const char* rpm = "$SYS/formatted/rpm";
-const char* VhSpeed = "$SYS/formatted/VhSpeed";
+volatile sem_t current_gear_mutex;
+volatile sem_t powershift_mutex;
+volatile sem_t is_neutral_mutex;
+struct mosquitto* mosq;
 
-struct can_frame {
-    unsigned short int id;
-    unsigned int time;
-    char data[8];
-};
+volatile bool running = true;
 
-struct can_frame frame750;
-struct can_frame frame751;
 
-void send_Frame(struct can_frame frame)
-{
-	char json[100]; // da fare l'alloc della memoria ad hoc
-        sprintf(json, "{\"id\":%u,\"time\":%u,\"data\":[", frame.id, frame.time);
-        char tmp[10];
-        int i = 0;
-        for (i = 0; i < 8; i++) {
-		sprintf(tmp, "0x%02hhX,", frame.data[i]);
-		strcat(json, tmp);
+/**
+ * Callback to new mosquitto messages. Runs asynchronously.
+ * Update for new gear value.
+ *
+ * @param mosq    Mosquitto client object
+ * @param obj     _unneeded_
+ * @param message A struct with _topic_ of provenience and _payload_
+ */
+void mosquitto_inbox(struct mosquitto* mosq, void* obj, const struct mosquitto_message* message) {
+    const json_object* json = json_tokener_parse(message->payload);
+    const json_object* json_value;
+
+    if ((json != NULL) && (json_object_get_type(json) == json_type_object) {
+        json_object_object_get_ex(json, "value", &json_value);
+
+        if ((json_object != NULL) && (json_object_get_type(json_value) == json_type_int)) {
+            int32_t new_gear = json_object_get_int(json_value);
+
+            if (new_gear >= 0 && new_gear <= GEAR_MAX) {
+                sem_wait(&current_gear_mutex);
+                current_gear = (uint8_t) new_gear;
+                sem_post(&current_gear_mutex);
+            }
         }
-
-        strcat(json, "]}");
-	// printf("SEND: %s\n", json); // PER DEBUG
-        mosquitto_publish(mosq, NULL, "$SYS/raw", 100, &json, 0, false);
+    }
 }
 
+/**
+ * Setup gear input coming from mosquitto.
+ */
+void gear_input_setup() {
+    mosquitto_lib_init();
+    mosq = mosquitto_new("ModAccel", true, NULL);
 
+    mosquitto_message_callback_set(mosq, mosquitto_inbox);
 
-void accelerationButtonValueChanged()
-{
-	delayMicroseconds(50000);
-	acceleration = !(bool)digitalRead(accelerationButton);
+    int ret = mosquitto_connect(mosq, MQTT_BROKER_ADDR, MQTT_BROKER_PORT, MQTT_KEEPALIVE);
+    if (ret != MOSQ_ERR_SUCCESS)
+        return;
 
-	if (acceleration == 1) {
-		printf("Mode Acceleration /n");
-        	ultimaCambiataTime = (uint32_t)millis();
-        	aggiorna0_100time = true;
-        /*
-		Serial.println("start timer");
-        	delay(500);
-    	} else {
-    		mandare pacchetto con id 750
-    	*/
-    	}
+    mosquitto_subscribe(mosq, NULL, MQTT_TOPIC_GEAR, 1);
 }
 
-void shiftLTvalueChanged()
-{
-	if (!(bool)digitalRead(SH_LT) && !(bool)digitalRead(N_GR))
-		sogliaRpmUP = Rpm;
+/**
+ * Callback if shift light has changed. Runs asynchronously.
+ * This is the critical part of the program.
+ */
+void shift_light_changed() {
+    // early return on error, saving time with short jumps
+    if (!(bool) digitalRead(SHIFT_LIGHT_PIN))
+        return;
+    
+    if (is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0))
+        return;
+
+
+    /*
+     * === CRITICAL SECTION ===
+     * Please be aware that PowerShift MUST be used responsibly.
+     * DO NOT EVER use the resource improperly!
+     */
+    sem_wait(&powershift_mutex);
+    
+    // OK to go, signal is airborne
+    digitalWrite(GEAR_UP_PIN, LOW);
+    delay(GEAR_SHIFT_TIME_MS);
+    digitalWrite(GEAR_UP_PIN, HIGH);
+    delay(GEAR_DEAD_TIME_MS);
+
+    int ret = sem_post(&powershift_mutex);
+    /* === END CRITICAL SECTION === */
+
+    if (ret == -1)
+        exit(EXIT_FAILURE_MUTEX);
 }
 
+/**
+ * Callback if neutral signal has changed. Runs asynchronously.
+ */
+void neutral_gear_changed() {
+    sem_wait(&is_neutral_mutex);
+    
+    if ((bool) digitalRead(NEUTRAL_GEAR_PIN))
+        is_neutral = true;
+    else
+        is_neutral = false;
 
-
-//cambio automatico nella prova di accelerazione
-void gearUP(uint32_t sh_time)
-{
-	uint32_t ctrlTime = (uint32_t)millis() - ultimaCambiataTime;
-
-	if (ctrlTime > tempoCieco) {
-		uint16_t shift_duration = 0;
-		if (gear != 1)
-			shift_duration = durataCambiata;
-		else
-          		shift_duration=durataCambiata + tempoAggFolle;
-
-	        digitalWrite(gearUPpin, LOW);
-	        delay(shift_duration);
-	        digitalWrite(gearUPpin, HIGH);
-		printf("Marcia cambiata /n");
-	        ultimaCambiataTime = (uint32_t)millis();
-	        frame751.data[2] = shift_duration >> 8;
-	        frame751.data[3] = shift_duration;
-	        //frame751.data = ctrlTime;
-	        frame751.id = 751;
-	        frame751.time = (uint32_t)millis();
-	        send_Frame(frame751);
-	        gear_old = gear;
-	        gear = gear + 1;
-	}
+    sem_post(&is_neutral_mutex);
 }
 
-void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message)
-{
-	json_object *jobj = json_tokener_parse(message->payload);
-	enum json_type type;
+/**
+ * Setup inputs using wiringPi and MQTT
+ */
+void input_setup() {
+    wiringPiSetup();
 
-	jobj = json_object_object_get(jobj, "data");
-	int data = json_object_get_int(jobj);
+    pinMode(SHIFT_LIGH_PIN, INPUT);
+    pinMode(NEUTRAL_GEAR_PIN, INPUT);
 
-	if (message->topic == GEAR)
-		gear = (uint8_t)data;
+    wiringPiISR(SHIFT_LIGHT_PIN, INT_EDGE_BOTH, shift_light_changed);
+    wiringPiISR(NEUTRAL_GEAR_PIN, INT_EDGE_BOTH, neutral_gear_changed);
 
-	if (message->topic == rpm)
-		Rpm = (uint8_t)data;
-
-	if (message->topic == VhSpeed)
-		Speed = (float)data;
+    gear_input_setup();
 }
 
-void connect_callback(struct mosquitto *mosq, void *obj, int result)
-{
-	mosquitto_subscribe(mosq, NULL, GEAR, 0);
-	mosquitto_subscribe(mosq, NULL, rpm,0);
-	mosquitto_subscribe(mosq, NULL, VhSpeed,0);
+/**
+ * Cleanup handler upon program termination
+ */
+inline void program_terminate() {
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+
+    sem_close(&powershift_mutex);
+    sem_close(&current_gear_mutex);
+    sem_close(&is_neutral_mutex);
 }
 
-void NgearvalueChanged()
-{
-	if (!(bool)digitalRead(N_GR))
-      		gear=0;
+/**
+ * Linux signal handler
+ */
+inline void terminate_handler() {
+    running = false;
 }
 
-int Setup(void)
-{
-	//inizializzazione interruttori
-	pinMode(accelerationButton, INPUT);
-	pinMode(lapEndButton, INPUT);
-	pinMode(gearUPpin, OUTPUT);
-	pinMode(gearDWpin, OUTPUT);
-
-	//è il caso di metterli nel loop?
-	acceleration = !(bool)digitalRead(accelerationButton);
-
-	//gestione degli interrupt della libreria wiringPi
-	//int wiringPiISR ( int pin, int edgeType, void (*function)(void) )
-	wiringPiISR(accelerationButton, INT_EDGE_BOTH, &accelerationButtonValueChanged);
-
-	//inizializzazione CD4511 per codifica display 7 segmenti
-	pinMode(CD_A, OUTPUT);
-	pinMode(CD_B, OUTPUT);
-	pinMode(CD_C, OUTPUT);
-	pinMode(CD_D, OUTPUT);
-	pinMode(LE,OUTPUT);
-
-	//shift light e folle
-	pinMode(SH_LT, INPUT);
-	pinMode(N_GR, INPUT);
-	wiringPiISR(SH_LT, INT_EDGE_BOTH, &shiftLTvalueChanged);
-	wiringPiISR(N_GR, INT_EDGE_BOTH, &NgearvalueChanged);
+/**
+ * Main program loop until a signal is caught
+ * Check and keep alive MQTT connection.
+ */
+inline void loop() {
+    do {
+        mosquitto_loop(mosq, -1, 1);
+    } while (running);
 }
 
-int main(int argc, char *argv[])
-{
-	wiringPiSetup ();
-	Setup();
+/**
+ * Main program logic
+ */
+int main(int argv, char** argc) {
+    sem_init(&powershift_mutex, 0, 1);
+    sem_init(&current_gear_mutex, 0, 1);
+    sem_init(&is_neutral_mutex, 0, 1);
 
-	mosquitto_lib_init();
-	mosquitto_connect(mosq, host, port, 60);
-	printf("connessione avvenuta");
-	mosq = mosquitto_new(NULL,true,NULL);
-	mosquitto_connect_callback_set(mosq, connect_callback);
-	mosquitto_message_callback_set(mosq, message_callback);
+    input_setup();
 
-	while (1) {
-		if (acceleration == 1) {
-			aggiorna0_100time = true;
-			if (Rpm >= sogliaRpmDW && (bool)digitalRead(SH_LT) == 1) {
-				uint16_t sh_time = (uint32_t)millis() - accStartTime;
-				frame751.data[0] = sogliaRpmUP >> 8;
-				frame751.data[1] = sogliaRpmUP;
-				// frame751.data[2] = sh_time >> 8;
-				//frame751.data[3] = sh_time;
-				//frame751.data[4] = sh_time >> 8;
-				//frame751.data[5] = sh_time;
-				//frame751.data[6] = 0;
-				//frame751.data[7] = 0;
-				frame751.id=751;
-				frame751.time= (uint32_t)millis();
-				send_Frame(frame751);
+    signal(SIGTERM, terminate_handler);
+    signal(SIGHUP, terminate_handler);
+    signal(SIGINT, terminate_handler);
 
-				if(Speed == 0){
-					accStartTime = (uint32_t)millis();
-				}
-				if(Speed > 100 && aggiorna0_100time){
-					accTime = (uint32_t)millis() - accStartTime;
-					frame751.data[4] = accTime >> 8;
-					frame751.data[5] = accTime;
-					frame751.id=751;
-					frame751.time=(uint32_t)millis();
-					send_Frame(frame751);
-					aggiorna0_100time = false;
-				}
-				//cambio marcia
-				if ((bool)digitalRead(SH_LT) == 1 && gear != 0 && gear != 6)
-					gearUP(sh_time);
-	        	}
-      		}
-     	}
+    loop();
+
+    program_terminate();
+
+    return EXIT_SUCCESS;
 }
+
