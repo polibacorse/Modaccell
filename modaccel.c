@@ -97,7 +97,7 @@ void shift_light_changed() {
     if ((bool) digitalRead(SHIFT_LIGHT_PIN)) //! Signal is ACTIVE if 0
         return;
     
-    if ( ! is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
+    if (!is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
         return;
 
 
@@ -127,9 +127,7 @@ void shift_light_changed() {
 void neutral_gear_changed() {
     sem_wait(&is_neutral_mutex);
     
-    
-    is_neutral = (bool) digitalRead(NEUTRAL_GEAR_PIN)
-    
+    is_neutral = (bool) digitalRead(NEUTRAL_GEAR_PIN);
 
     sem_post(&is_neutral_mutex);
 }
@@ -201,4 +199,3 @@ int main(int argv, char** argc) {
 
     return EXIT_SUCCESS;
 }
-
