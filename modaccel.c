@@ -13,12 +13,12 @@
 /*
  * Configuration
  */
-#define SHIFT_LIGHT_PIN     X
-#define NEUTRAL_GEAR_PIN    X
-#define GEAR_UP_PIN         X
-#define GEAR_SHIFT_TIME_MS  X // milliseconds
-#define GEAR_DEAD_TIME_MS   X // milliseconds
-#define GEAR_MAX            X
+#define SHIFT_LIGHT_PIN     7
+#define NEUTRAL_GEAR_PIN    0
+#define GEAR_UP_PIN         12
+#define GEAR_SHIFT_TIME_MS  2000 // milliseconds
+#define GEAR_DEAD_TIME_MS   500 // milliseconds
+#define GEAR_MAX            4
 
 #define MQTT_TOPIC_GEAR     "data/formatted/gear"
 #define MQTT_BROKER_ADDR    "localhost"
@@ -97,7 +97,7 @@ void shift_light_changed() {
     if ((bool) digitalRead(SHIFT_LIGHT_PIN)) //! Signal is ACTIVE if 0
         return;
     
-    if (is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0))
+    if ( ! is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
         return;
 
 
@@ -109,9 +109,9 @@ void shift_light_changed() {
     sem_wait(&powershift_mutex);
     
     // OK to go, signal is airborne
-    digitalWrite(GEAR_UP_PIN, LOW);
-    delay(GEAR_SHIFT_TIME_MS);
     digitalWrite(GEAR_UP_PIN, HIGH);
+    delay(GEAR_SHIFT_TIME_MS);
+    digitalWrite(GEAR_UP_PIN, LOW);
     delay(GEAR_DEAD_TIME_MS);
 
     int ret = sem_post(&powershift_mutex);
@@ -127,10 +127,9 @@ void shift_light_changed() {
 void neutral_gear_changed() {
     sem_wait(&is_neutral_mutex);
     
-    if ((bool) digitalRead(NEUTRAL_GEAR_PIN))
-        is_neutral = true;
-    else
-        is_neutral = false;
+    
+    is_neutral = (bool) digitalRead(NEUTRAL_GEAR_PIN)
+    
 
     sem_post(&is_neutral_mutex);
 }
@@ -143,6 +142,9 @@ void input_setup() {
 
     pinMode(SHIFT_LIGH_PIN, INPUT);
     pinMode(NEUTRAL_GEAR_PIN, INPUT);
+    pinMode(GEAR_UP_PIN, OUTPUT);
+    
+    digitalWrite(GEAR_UP_PIN, LOW);
 
     wiringPiISR(SHIFT_LIGHT_PIN, INT_EDGE_BOTH, shift_light_changed);
     wiringPiISR(NEUTRAL_GEAR_PIN, INT_EDGE_BOTH, neutral_gear_changed);
