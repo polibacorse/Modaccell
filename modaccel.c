@@ -154,7 +154,7 @@ void input_setup() {
 /**
  * Cleanup handler upon program termination
  */
-inline void program_terminate() {
+void program_terminate() {
     mosquitto_destroy(mosq);
     mosquitto_lib_cleanup();
 
@@ -166,7 +166,7 @@ inline void program_terminate() {
 /**
  * Linux signal handler
  */
-inline void terminate_handler() {
+void terminate_handler() {
     running = false;
 }
 
@@ -174,7 +174,7 @@ inline void terminate_handler() {
  * Main program loop until a signal is caught
  * Check and keep alive MQTT connection.
  */
-inline void loop() {
+void loop() {
     do {
         mosquitto_loop(mosq, -1, 1);
     } while (running);
