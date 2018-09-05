@@ -59,7 +59,7 @@ void mosquitto_inbox(struct mosquitto* mosq, void* obj, const struct mosquitto_m
     const json_object* json = json_tokener_parse(message->payload);
     const json_object* json_value;
 
-    if ((json != NULL) && (json_object_get_type(json) == json_type_object) {
+    if ((json != NULL) && (json_object_get_type(json) == json_type_object)) {
         json_object_object_get_ex(json, "value", &json_value);
 
         if ((json_object != NULL) && (json_object_get_type(json_value) == json_type_int)) {
