@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <signal.h>
 #include <semaphore.h>
 
 #include <json-c/json.h>
@@ -57,13 +58,13 @@ void mosquitto_inbox(struct mosquitto* mosq, void* obj, const struct mosquitto_m
     const json_object* json = json_tokener_parse(message->payload);
     const json_object* json_value;
 
-    if ((json != NULL) && (json_object_get_type(json) == json_type_object) {
+    if ((json != NULL) && (json_object_get_type(json) == json_type_object)) {
         json_object_object_get_ex(json, "value", &json_value);
 
         if ((json_object != NULL) && (json_object_get_type(json_value) == json_type_int)) {
             int32_t new_gear = json_object_get_int(json_value);
 
-            if (new_gear >= 0 && new_gear <= GEAR_MAX) {
+            if ((new_gear >= 0) && (new_gear <= GEAR_MAX)) {
                 sem_wait(&current_gear_mutex);
                 current_gear = (uint8_t) new_gear;
                 sem_post(&current_gear_mutex);
@@ -138,7 +139,7 @@ void neutral_gear_changed() {
 void input_setup() {
     wiringPiSetup();
 
-    pinMode(SHIFT_LIGH_PIN, INPUT);
+    pinMode(SHIFT_LIGHT_PIN, INPUT);
     pinMode(NEUTRAL_GEAR_PIN, INPUT);
     pinMode(GEAR_UP_PIN, OUTPUT);
     
