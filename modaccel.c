@@ -61,7 +61,7 @@ void mosquitto_inbox(struct mosquitto* mosq, void* obj, const struct mosquitto_m
     if ((json != NULL) && (json_object_get_type(json) == json_type_object)) {
         json_object_object_get_ex(json, "value", &json_value);
 
-        if ((json_object != NULL) && (json_object_get_type(json_value) == json_type_int)) {
+        if ((json_value != NULL) && (json_object_get_type(json_value) == json_type_int)) {
             int32_t new_gear = json_object_get_int(json_value);
 
             if ((new_gear >= 0) && (new_gear <= GEAR_MAX)) {
