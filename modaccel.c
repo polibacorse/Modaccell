@@ -98,7 +98,7 @@ void shift_light_changed() {
     if ((bool) digitalRead(SHIFT_LIGHT_PIN)) //! Signal is ACTIVE if 0
         return;
     
-    if (!is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
+    if (!is_neutral || (current_gear >= GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
         return;
 
 
