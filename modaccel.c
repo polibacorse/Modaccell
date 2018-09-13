@@ -22,6 +22,7 @@
 #define GEAR_MAX            4
 
 #define MQTT_TOPIC_GEAR     "data/formatted/gear"
+#define MQTT_TOPIC_RUN_FLAG "data/formatted/auto_acc_flag"
 #define MQTT_BROKER_ADDR    "localhost"
 #define MQTT_BROKER_PORT    1883
 #define MQTT_KEEPALIVE      120
@@ -43,6 +44,7 @@ volatile sem_t powershift_mutex;
 volatile sem_t is_neutral_mutex;
 struct mosquitto* mosq;
 
+volatile bool activation = false;
 volatile bool running = true;
 
 
@@ -62,12 +64,16 @@ void mosquitto_inbox(struct mosquitto* mosq, void* obj, const struct mosquitto_m
         json_object_object_get_ex(json, "value", &json_value);
 
         if ((json_value != NULL) && (json_object_get_type(json_value) == json_type_int)) {
-            int32_t new_gear = json_object_get_int(json_value);
+            if (!strcmp(message->topic, MQTT_TOPIC_GEAR)) {
+                int32_t new_gear = json_object_get_int(json_value);
 
-            if ((new_gear >= 0) && (new_gear <= GEAR_MAX)) {
-                sem_wait(&current_gear_mutex);
-                current_gear = (uint8_t) new_gear;
-                sem_post(&current_gear_mutex);
+                if (new_gear >= 0 && new_gear <= GEAR_MAX) {
+                    sem_wait(&current_gear_mutex);
+                    current_gear = (uint8_t) new_gear;
+                    sem_post(&current_gear_mutex);
+                }
+            } else if (!strcmp(message->topic, MQTT_TOPIC_RUN_FLAG)) {
+                activation = (bool) json_object_get_int(json_value);
             }
         }
     }
@@ -87,6 +93,7 @@ void gear_input_setup() {
         return;
 
     mosquitto_subscribe(mosq, NULL, MQTT_TOPIC_GEAR, 1);
+    mosquitto_subscribe(mosq, NULL, MQTT_TOPIC_RUN_FLAG, 1);
 }
 
 /**
@@ -95,9 +102,12 @@ void gear_input_setup() {
  */
 void shift_light_changed() {
     // early return on error, saving time with short jumps
+    if (!activation)
+        return;
+
     if ((bool) digitalRead(SHIFT_LIGHT_PIN)) //! Signal is ACTIVE if 0
         return;
-    
+
     if (!is_neutral || (current_gear >= GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
         return;
 
@@ -108,7 +118,7 @@ void shift_light_changed() {
      * DO NOT EVER use the resource improperly!
      */
     sem_wait(&powershift_mutex);
-    
+
     // OK to go, signal is airborne
     digitalWrite(GEAR_UP_PIN, HIGH);
     delay(GEAR_SHIFT_TIME_MS);
@@ -127,7 +137,7 @@ void shift_light_changed() {
  */
 void neutral_gear_changed() {
     sem_wait(&is_neutral_mutex);
-    
+
     is_neutral = (bool) digitalRead(NEUTRAL_GEAR_PIN);
 
     sem_post(&is_neutral_mutex);
@@ -142,7 +152,7 @@ void input_setup() {
     pinMode(SHIFT_LIGHT_PIN, INPUT);
     pinMode(NEUTRAL_GEAR_PIN, INPUT);
     pinMode(GEAR_UP_PIN, OUTPUT);
-    
+
     digitalWrite(GEAR_UP_PIN, LOW);
 
     wiringPiISR(SHIFT_LIGHT_PIN, INT_EDGE_BOTH, shift_light_changed);
