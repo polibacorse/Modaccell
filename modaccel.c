@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <signal.h>
 #include <semaphore.h>
 
 #include <json-c/json.h>
@@ -62,7 +63,7 @@ void mosquitto_inbox(struct mosquitto* mosq, void* obj, const struct mosquitto_m
     if ((json != NULL) && (json_object_get_type(json) == json_type_object)) {
         json_object_object_get_ex(json, "value", &json_value);
 
-        if ((json_object != NULL) && (json_object_get_type(json_value) == json_type_int)) {
+        if ((json_value != NULL) && (json_object_get_type(json_value) == json_type_int)) {
             if (!strcmp(message->topic, MQTT_TOPIC_GEAR)) {
                 int32_t new_gear = json_object_get_int(json_value);
 
@@ -106,8 +107,8 @@ void shift_light_changed() {
 
     if ((bool) digitalRead(SHIFT_LIGHT_PIN)) //! Signal is ACTIVE if 0
         return;
-    
-    if (!is_neutral || (current_gear > GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
+
+    if (!is_neutral || (current_gear >= GEAR_MAX) || (current_gear <= 0)) //! When neutral gear is engaged "is_neutral" is 0
         return;
 
 
@@ -117,7 +118,7 @@ void shift_light_changed() {
      * DO NOT EVER use the resource improperly!
      */
     sem_wait(&powershift_mutex);
-    
+
     // OK to go, signal is airborne
     digitalWrite(GEAR_UP_PIN, HIGH);
     delay(GEAR_SHIFT_TIME_MS);
@@ -136,7 +137,7 @@ void shift_light_changed() {
  */
 void neutral_gear_changed() {
     sem_wait(&is_neutral_mutex);
-    
+
     is_neutral = (bool) digitalRead(NEUTRAL_GEAR_PIN);
 
     sem_post(&is_neutral_mutex);
@@ -148,10 +149,10 @@ void neutral_gear_changed() {
 void input_setup() {
     wiringPiSetup();
 
-    pinMode(SHIFT_LIGH_PIN, INPUT);
+    pinMode(SHIFT_LIGHT_PIN, INPUT);
     pinMode(NEUTRAL_GEAR_PIN, INPUT);
     pinMode(GEAR_UP_PIN, OUTPUT);
-    
+
     digitalWrite(GEAR_UP_PIN, LOW);
 
     wiringPiISR(SHIFT_LIGHT_PIN, INT_EDGE_BOTH, shift_light_changed);
@@ -163,7 +164,7 @@ void input_setup() {
 /**
  * Cleanup handler upon program termination
  */
-inline void program_terminate() {
+void program_terminate() {
     mosquitto_destroy(mosq);
     mosquitto_lib_cleanup();
 
@@ -175,7 +176,7 @@ inline void program_terminate() {
 /**
  * Linux signal handler
  */
-inline void terminate_handler() {
+void terminate_handler() {
     running = false;
 }
 
@@ -183,7 +184,7 @@ inline void terminate_handler() {
  * Main program loop until a signal is caught
  * Check and keep alive MQTT connection.
  */
-inline void loop() {
+void loop() {
     do {
         mosquitto_loop(mosq, -1, 1);
     } while (running);
